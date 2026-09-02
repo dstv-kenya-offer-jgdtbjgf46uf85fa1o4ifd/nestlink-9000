@@ -25,19 +25,25 @@ function createSignatureAndHeaders(payload) {
   const nonce = crypto.randomBytes(16).toString('hex');
   const idempotencyKey = crypto.randomUUID();
 
-  // Ensure consistent JSON serialization across signature generation and request dispatch
+  // Standardize JSON string creation
   const bodyString = JSON.stringify(payload);
-  const endpointPath = '/v1/stkpush/initiate';
+  
+  // Update path to full API route path
+  const endpointPath = '/api/v1/stkpush/initiate';
 
   // Format: METHOD|PATH|TIMESTAMP|NONCE|BODY
   const stringToSign = `POST|${endpointPath}|${timestamp}|${nonce}|${bodyString}`;
 
+  // Automatically convert hex string secrets to Buffer if applicable
+  const secretKey = (apiSecret.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(apiSecret))
+    ? Buffer.from(apiSecret, 'hex')
+    : apiSecret;
+
   const signature = crypto
-    .createHmac('sha256', apiSecret)
+    .createHmac('sha256', secretKey)
     .update(stringToSign)
     .digest('hex');
 
-  // Debug output logged in your Render server logs
   console.log('--- HMAC DEBUG ---');
   console.log('API Key:', apiKey ? `${apiKey.substring(0, 4)}...` : 'MISSING');
   console.log('String to Sign:', stringToSign);
@@ -80,7 +86,7 @@ async function processBatchQueue(batchId, accountNumber, amount, phoneNumbers) {
     try {
       const { headers, bodyString } = createSignatureAndHeaders(payload);
 
-      // Pass the exact pre-stringified raw JSON body string to axios to prevent re-serialization discrepancies
+      // Pass the exact stringified body string to prevent re-serialization discrepancies
       const response = await axios.post(`${API_BASE}/v1/stkpush/initiate`, bodyString, { headers });
 
       job.logs.push({
@@ -112,7 +118,6 @@ async function processBatchQueue(batchId, accountNumber, amount, phoneNumbers) {
 
     job.processed++;
 
-    // Delay following requests to keep strictly within 9 RPM
     if (i < phoneNumbers.length - 1) {
       await sleep(DELAY_MS);
     }
@@ -142,7 +147,6 @@ app.post('/api/bulk-stkpush', (req, res) => {
 
   batchJobs.set(batchId, job);
 
-  // Run asynchronously in the background
   processBatchQueue(batchId, account_number, Number(amount), phone_numbers);
 
   return res.json({ batchId, message: 'Batch queue created successfully' });
