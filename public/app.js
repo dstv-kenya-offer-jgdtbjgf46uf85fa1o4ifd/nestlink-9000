@@ -24,8 +24,15 @@ document.getElementById('stkForm').addEventListener('submit', async (e) => {
       body: JSON.stringify({ account_number: accountNumber, amount, phone_numbers })
     });
 
+    // Handle non-JSON HTML/text responses safely without crashing
+    const contentType = res.headers.get('content-type');
+    if (!contentType || !contentType.includes('application/json')) {
+      const rawText = await res.text();
+      throw new Error(`Server returned non-JSON (${res.status}): ${rawText || res.statusText}`);
+    }
+
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Failed to initialize');
+    if (!res.ok) throw new Error(data.error || 'Failed to initialize request');
 
     pollProgress(data.batchId);
   } catch (err) {
@@ -38,7 +45,15 @@ function pollProgress(batchId) {
   const interval = setInterval(async () => {
     try {
       const res = await fetch(`/api/batch-status/${batchId}`);
+      
+      const contentType = res.headers.get('content-type');
+      if (!contentType || !contentType.includes('application/json')) {
+        console.error('Polling returned non-JSON response');
+        return;
+      }
+
       const job = await res.json();
+      if (!res.ok) throw new Error(job.error || 'Failed to fetch status');
 
       document.getElementById('counterText').innerText = `Processed ${job.processed} of ${job.total} (Success: ${job.successful}, Failed: ${job.failed})`;
       
@@ -57,7 +72,7 @@ function pollProgress(batchId) {
         document.getElementById('submitBtn').disabled = false;
       }
     } catch (err) {
-      console.error('Polling error', err);
+      console.error('Polling error:', err);
     }
   }, 2000);
 }
