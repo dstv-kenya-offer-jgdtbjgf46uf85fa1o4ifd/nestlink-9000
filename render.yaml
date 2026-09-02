@@ -1,0 +1,12 @@
+services:
+  - type: web
+    name: bulk-stk-push-app
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    envVars:
+      - key: NESTLINK_CLIENT_ID
+        sync: false
+      - key: NESTLINK_API_SECRET
+        sync: false
