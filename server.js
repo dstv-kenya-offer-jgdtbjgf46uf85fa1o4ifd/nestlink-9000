@@ -15,40 +15,43 @@ app.use(express.static(path.join(__dirname, 'public')));
 const batchJobs = new Map();
 
 /**
- * Generate HMAC Header Signature for Nestlink API
+ * Generate Canonical HMAC-SHA256 Header Signature for Nestlink API
  */
 function createSignatureAndHeaders(payload) {
   const apiKey = process.env.NESTLINK_CLIENT_ID ? process.env.NESTLINK_CLIENT_ID.trim() : '';
   const apiSecret = process.env.NESTLINK_API_SECRET ? process.env.NESTLINK_API_SECRET.trim() : '';
 
   const timestamp = Math.floor(Date.now() / 1000).toString();
-  const nonce = crypto.randomBytes(16).toString('hex');
-  const idempotencyKey = crypto.randomUUID();
+  const nonce = crypto.randomUUID(); // UUID v4 format
+  const idempotencyKey = crypto.randomUUID(); // UUID v4 format
 
-  // Standardize JSON string creation
+  // 1. Serialize payload & calculate SHA-256 digest of body
   const bodyString = JSON.stringify(payload);
-  
-  // Update path to full API route path
-  const endpointPath = '/api/v1/stkpush/initiate';
+  const bodyHash = crypto.createHash('sha256').update(bodyString).digest('hex');
 
-  // Format: METHOD|PATH|TIMESTAMP|NONCE|BODY
-  const stringToSign = `POST|${endpointPath}|${timestamp}|${nonce}|${bodyString}`;
+  // 2. Canonical Path (api/v1/stkpush/initiate)
+  const canonicalPath = 'api/v1/stkpush/initiate';
 
-  // Automatically convert hex string secrets to Buffer if applicable
-  const secretKey = (apiSecret.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(apiSecret))
-    ? Buffer.from(apiSecret, 'hex')
-    : apiSecret;
+  // 3. Construct Canonical Multiline String separated by \n
+  const canonicalString = [
+    'POST',
+    canonicalPath,
+    timestamp,
+    nonce,
+    idempotencyKey,
+    bodyHash
+  ].join('\n');
 
+  // 4. Compute HMAC-SHA256 using client_secret
   const signature = crypto
-    .createHmac('sha256', secretKey)
-    .update(stringToSign)
+    .createHmac('sha256', apiSecret)
+    .update(canonicalString)
     .digest('hex');
 
-  console.log('--- HMAC DEBUG ---');
-  console.log('API Key:', apiKey ? `${apiKey.substring(0, 4)}...` : 'MISSING');
-  console.log('String to Sign:', stringToSign);
+  console.log('--- HMAC CANONICAL DEBUG ---');
+  console.log('Canonical String:\n' + canonicalString);
   console.log('Generated Signature:', signature);
-  console.log('------------------');
+  console.log('----------------------------');
 
   return {
     headers: {
@@ -86,7 +89,7 @@ async function processBatchQueue(batchId, accountNumber, amount, phoneNumbers) {
     try {
       const { headers, bodyString } = createSignatureAndHeaders(payload);
 
-      // Pass the exact stringified body string to prevent re-serialization discrepancies
+      // Pass the exact stringified body to avoid payload re-serialization discrepancies
       const response = await axios.post(`${API_BASE}/v1/stkpush/initiate`, bodyString, { headers });
 
       job.logs.push({
