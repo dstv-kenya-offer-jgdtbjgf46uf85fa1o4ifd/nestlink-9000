@@ -27,7 +27,7 @@ function generateHeaders(payload) {
 
   const stringToSign = `POST|/v1/stkpush/initiate|${timestamp}|${nonce}|${bodyString}`;
   const signature = crypto
-    .createHmac('sha256', API_SECRET)
+    .createHmac('sha256', API_SECRET || '')
     .update(stringToSign)
     .digest('hex');
 
@@ -64,13 +64,20 @@ async function processBatchQueue(batchId, accountNumber, amount, phoneNumbers) {
       job.logs.push({
         phone,
         status: 'SUCCESS',
-        checkout_id: response.data.checkout_id,
-        correlation_id: response.data.correlation_id,
+        checkout_id: response.data.checkout_id || 'N/A',
+        correlation_id: response.data.correlation_id || 'N/A',
         timestamp: new Date().toISOString()
       });
       job.successful++;
     } catch (err) {
-      const errorMsg = err.response ? JSON.stringify(err.response.data) : err.message;
+      // Safely handle string, object, or standard error responses
+      let errorMsg = err.message;
+      if (err.response?.data) {
+        errorMsg = typeof err.response.data === 'object' 
+          ? JSON.stringify(err.response.data) 
+          : err.response.data;
+      }
+
       job.logs.push({
         phone,
         status: 'FAILED',
@@ -96,7 +103,7 @@ app.post('/api/bulk-stkpush', (req, res) => {
   const { account_number, amount, phone_numbers } = req.body;
 
   if (!account_number || !amount || !Array.isArray(phone_numbers) || phone_numbers.length === 0) {
-    return res.status(400).json({ error: 'Invalid payload provided' });
+    return res.status(400).json({ error: 'Invalid payload provided. Check account number, amount, and phone list.' });
   }
 
   const batchId = crypto.randomUUID();
@@ -121,8 +128,15 @@ app.post('/api/bulk-stkpush', (req, res) => {
 // Endpoint to poll batch execution log updates
 app.get('/api/batch-status/:batchId', (req, res) => {
   const job = batchJobs.get(req.params.batchId);
-  if (!job) return res.status(404).json({ error: 'Batch ID not found' });
-  res.json(job);
+  if (!job) {
+    return res.status(404).json({ error: 'Batch ID not found' });
+  }
+  return res.json(job);
+});
+
+// Catch-all route for unhandled endpoints returning clean JSON errors
+app.use((req, res) => {
+  res.status(404).json({ error: `Route ${req.method} ${req.url} not found.` });
 });
 
 app.listen(PORT, () => console.log(`Server executing on port ${PORT}`));
