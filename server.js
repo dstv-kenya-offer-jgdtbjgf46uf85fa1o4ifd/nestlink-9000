@@ -7,8 +7,6 @@ const path = require('path');
 const app = express();
 const PORT = process.env.PORT || 3000;
 const API_BASE = 'https://automate.nestlink.co.ke/api';
-const CLIENT_ID = process.env.NESTLINK_CLIENT_ID;
-const API_SECRET = process.env.NESTLINK_API_SECRET;
 
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
@@ -19,25 +17,43 @@ const batchJobs = new Map();
 /**
  * Generate HMAC Header Signature for Nestlink API
  */
-function generateHeaders(payload) {
+function createSignatureAndHeaders(payload) {
+  const apiKey = process.env.NESTLINK_CLIENT_ID ? process.env.NESTLINK_CLIENT_ID.trim() : '';
+  const apiSecret = process.env.NESTLINK_API_SECRET ? process.env.NESTLINK_API_SECRET.trim() : '';
+
   const timestamp = Math.floor(Date.now() / 1000).toString();
   const nonce = crypto.randomBytes(16).toString('hex');
   const idempotencyKey = crypto.randomUUID();
-  const bodyString = typeof payload === 'string' ? payload : JSON.stringify(payload);
 
-  const stringToSign = `POST|/v1/stkpush/initiate|${timestamp}|${nonce}|${bodyString}`;
+  // Ensure consistent JSON serialization across signature generation and request dispatch
+  const bodyString = JSON.stringify(payload);
+  const endpointPath = '/v1/stkpush/initiate';
+
+  // Format: METHOD|PATH|TIMESTAMP|NONCE|BODY
+  const stringToSign = `POST|${endpointPath}|${timestamp}|${nonce}|${bodyString}`;
+
   const signature = crypto
-    .createHmac('sha256', API_SECRET || '')
+    .createHmac('sha256', apiSecret)
     .update(stringToSign)
     .digest('hex');
 
+  // Debug output logged in your Render server logs
+  console.log('--- HMAC DEBUG ---');
+  console.log('API Key:', apiKey ? `${apiKey.substring(0, 4)}...` : 'MISSING');
+  console.log('String to Sign:', stringToSign);
+  console.log('Generated Signature:', signature);
+  console.log('------------------');
+
   return {
-    'Content-Type': 'application/json',
-    'X-API-Key': CLIENT_ID,
-    'X-Timestamp': timestamp,
-    'X-Nonce': nonce,
-    'X-Idempotency-Key': idempotencyKey,
-    'X-Signature': signature
+    headers: {
+      'Content-Type': 'application/json',
+      'X-API-Key': apiKey,
+      'X-Timestamp': timestamp,
+      'X-Nonce': nonce,
+      'X-Idempotency-Key': idempotencyKey,
+      'X-Signature': signature
+    },
+    bodyString
   };
 }
 
@@ -55,11 +71,17 @@ async function processBatchQueue(batchId, accountNumber, amount, phoneNumbers) {
 
   for (let i = 0; i < phoneNumbers.length; i++) {
     const phone = phoneNumbers[i];
-    const payload = { account_number: accountNumber, amount, phone };
+    const payload = {
+      account_number: String(accountNumber),
+      amount: Number(amount),
+      phone: String(phone)
+    };
 
     try {
-      const headers = generateHeaders(payload);
-      const response = await axios.post(`${API_BASE}/v1/stkpush/initiate`, payload, { headers });
+      const { headers, bodyString } = createSignatureAndHeaders(payload);
+
+      // Pass the exact pre-stringified raw JSON body string to axios to prevent re-serialization discrepancies
+      const response = await axios.post(`${API_BASE}/v1/stkpush/initiate`, bodyString, { headers });
 
       job.logs.push({
         phone,
@@ -70,13 +92,14 @@ async function processBatchQueue(batchId, accountNumber, amount, phoneNumbers) {
       });
       job.successful++;
     } catch (err) {
-      // Safely handle string, object, or standard error responses
       let errorMsg = err.message;
       if (err.response?.data) {
-        errorMsg = typeof err.response.data === 'object' 
-          ? JSON.stringify(err.response.data) 
+        errorMsg = typeof err.response.data === 'object'
+          ? JSON.stringify(err.response.data)
           : err.response.data;
       }
+
+      console.error(`[STK Push Error - ${phone}]:`, errorMsg);
 
       job.logs.push({
         phone,
