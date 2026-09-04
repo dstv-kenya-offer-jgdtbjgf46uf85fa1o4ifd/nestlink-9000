@@ -76,7 +76,7 @@ const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
  */
 async function processBatchQueue(batchId, accountNumber, amount, phoneNumbers) {
   const job = batchJobs.get(batchId);
-  const DELAY_MS = 6667; // Enforces 9 requests per minute ceiling
+  const DELAY_MS = 3000; // Enforces 9 requests per minute ceiling
 
   for (let i = 0; i < phoneNumbers.length; i++) {
     const phone = phoneNumbers[i];
@@ -144,7 +144,7 @@ app.post('/api/bulk-stkpush', (req, res) => {
     processed: 0,
     successful: 0,
     failed: 0,
-    status: 'PROCESSING',
+    status: 'INASHUGHULIKIWA',
     logs: []
   };
 
